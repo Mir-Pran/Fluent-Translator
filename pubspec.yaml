@@ -1,0 +1,54 @@
+name: fluent_translate
+description: "Fluent Translate — a beautiful, minimal English <-> Bangla translation app."
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management
+  flutter_riverpod: ^2.6.1
+
+  # Translation (on-device)
+  google_mlkit_translation: ^0.12.0
+  google_mlkit_language_id: ^0.11.0
+
+  # Local storage
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  path_provider: ^2.1.5
+  shared_preferences: ^2.3.3
+
+  # Speech
+  flutter_tts: ^4.2.0
+  speech_to_text: ^7.0.0
+
+  # Share & links
+  share_plus: ^10.1.4
+  url_launcher: ^6.3.1
+
+  # Export (PDF/CSV)
+  pdf: ^3.11.2
+  printing: ^5.13.4
+
+  # Styling
+  google_fonts: ^6.2.1
+
+  # Utilities
+  intl: ^0.19.0
+  http: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
