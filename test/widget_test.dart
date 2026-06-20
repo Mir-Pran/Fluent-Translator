@@ -21,28 +21,29 @@ void main() {
   testWidgets('App boots and shows Translate tab', (WidgetTester tester) async {
     // Build the app and wait for initial frame.
     await tester.pumpWidget(const ProviderScope(child: FluentTranslateApp()));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 500));
 
     // The translate tab's input placeholder should be visible.
-    expect(find.text('Type or paste text...'), findsOneWidget);
+    expect(find.text('Type or paste text in English…'), findsOneWidget);
 
     // The translate button should exist.
     expect(find.byType(TranslateButton), findsOneWidget);
 
-    // Bottom nav should show all 4 tab labels.
+    // Bottom nav should show all 5 tab labels.
     expect(find.text('Translate'), findsWidgets);
-    expect(find.text('History'), findsOneWidget);
-    expect(find.text('Saved'), findsOneWidget);
-    expect(find.text('Settings'), findsOneWidget);
+    expect(find.text('Analyzer'), findsWidgets);
+    expect(find.text('History'), findsWidgets);
+    expect(find.text('Saved'), findsWidgets);
+    expect(find.text('Settings'), findsWidgets);
 
     // Tapping the Settings tab should switch views.
-    await tester.tap(find.text('Settings'));
-    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').last);
+    await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Settings'), findsWidgets); // tab label + heading
 
     // Switch back to Translate.
-    await tester.tap(find.text('Translate').first);
-    await tester.pumpAndSettle();
-    expect(find.text('Type or paste text...'), findsOneWidget);
+    await tester.tap(find.text('Translate').last);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Type or paste text in English…'), findsOneWidget);
   });
 }

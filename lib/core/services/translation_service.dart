@@ -1,8 +1,11 @@
-/// Translation service using MyMemory API (primary) + Google Translate (secondary)
-/// + ML Kit on-device (offline fallback).
+/// Translation service using ML Kit on-device (primary offline) +
+/// MyMemory API + Google Translate unofficial endpoint.
 ///
-/// MyMemory is a free public API that requires no API key and works reliably
-/// on Android without any special configuration.
+/// Offline mode: ML Kit is tried first; downloads models on first use.
+/// Online mode (default): MyMemory → Google → ML Kit fallback.
+///
+/// All 20 languages in AppLanguages.all that have mlkitCode are fully
+/// supported offline via Google ML Kit on-device translation.
 library;
 
 import 'dart:async';
@@ -13,91 +16,323 @@ import 'package:google_mlkit_language_id/google_mlkit_language_id.dart';
 import 'package:google_mlkit_translation/google_mlkit_translation.dart';
 import 'package:http/http.dart' as http;
 
+import '../../core/constants/app_languages.dart';
 import '../../data/models/translation_record.dart';
 
 class TranslationService {
   TranslationService();
 
-  final _languageId = LanguageIdentifier(confidenceThreshold: 0.5);
+  final _languageId = LanguageIdentifier(confidenceThreshold: 0.4);
   final Map<String, OnDeviceTranslator> _translators = {};
   final Set<String> _readyPairs = {};
   final _httpClient = http.Client();
 
+  // Cached model manager — re-use instead of constructing on every call.
+  static final _modelManager = OnDeviceTranslatorModelManager();
+
   // ──────────────────────────────────────────────────────────────────────────
-  // ensureModel: just download in the background silently, never blocks UI.
+  // ML Kit language mapping — ISO code → TranslateLanguage
+  // ──────────────────────────────────────────────────────────────────────────
+
+  static final Map<String, TranslateLanguage> _mlkitMap = {
+    'af': TranslateLanguage.afrikaans,
+    'ar': TranslateLanguage.arabic,
+    'be': TranslateLanguage.belarusian,
+    'bg': TranslateLanguage.bulgarian,
+    'bn': TranslateLanguage.bengali,
+    'ca': TranslateLanguage.catalan,
+    'cs': TranslateLanguage.czech,
+    'cy': TranslateLanguage.welsh,
+    'da': TranslateLanguage.danish,
+    'de': TranslateLanguage.german,
+    'el': TranslateLanguage.greek,
+    'en': TranslateLanguage.english,
+    'eo': TranslateLanguage.esperanto,
+    'es': TranslateLanguage.spanish,
+    'et': TranslateLanguage.estonian,
+    'fa': TranslateLanguage.persian,
+    'fi': TranslateLanguage.finnish,
+    'fr': TranslateLanguage.french,
+    'ga': TranslateLanguage.irish,
+    'gl': TranslateLanguage.galician,
+    'gu': TranslateLanguage.gujarati,
+    'he': TranslateLanguage.hebrew,
+    'hi': TranslateLanguage.hindi,
+    'hr': TranslateLanguage.croatian,
+    'ht': TranslateLanguage.haitian,
+    'hu': TranslateLanguage.hungarian,
+    'id': TranslateLanguage.indonesian,
+    'is': TranslateLanguage.icelandic,
+    'it': TranslateLanguage.italian,
+    'ja': TranslateLanguage.japanese,
+    'ka': TranslateLanguage.georgian,
+    'kn': TranslateLanguage.kannada,
+    'ko': TranslateLanguage.korean,
+    'lt': TranslateLanguage.lithuanian,
+    'lv': TranslateLanguage.latvian,
+    'mk': TranslateLanguage.macedonian,
+    'mr': TranslateLanguage.marathi,
+    'ms': TranslateLanguage.malay,
+    'mt': TranslateLanguage.maltese,
+    'nl': TranslateLanguage.dutch,
+    'no': TranslateLanguage.norwegian,
+    'pl': TranslateLanguage.polish,
+    'pt': TranslateLanguage.portuguese,
+    'ro': TranslateLanguage.romanian,
+    'ru': TranslateLanguage.russian,
+    'sk': TranslateLanguage.slovak,
+    'sl': TranslateLanguage.slovenian,
+    'sq': TranslateLanguage.albanian,
+    'sv': TranslateLanguage.swedish,
+    'sw': TranslateLanguage.swahili,
+    'ta': TranslateLanguage.tamil,
+    'te': TranslateLanguage.telugu,
+    'th': TranslateLanguage.thai,
+    'tl': TranslateLanguage.tagalog,
+    'tr': TranslateLanguage.turkish,
+    'uk': TranslateLanguage.ukrainian,
+    'ur': TranslateLanguage.urdu,
+    'vi': TranslateLanguage.vietnamese,
+    'zh': TranslateLanguage.chinese,
+    'zh-CN': TranslateLanguage.chinese,
+    'zh-TW': TranslateLanguage.chinese,
+  };
+
+  /// Look up TranslateLanguage for a given ISO code. Returns null if not
+  /// supported by ML Kit.
+  static TranslateLanguage? mlkitLanguage(String code) {
+    return _mlkitMap[code] ?? _mlkitMap[code.split('-').first];
+  }
+
+  /// Whether both languages in [direction] are supported for offline use.
+  static bool directionSupportsOffline(TranslationDirection direction) {
+    return mlkitLanguage(direction.sourceLangCode) != null &&
+        mlkitLanguage(direction.targetLangCode) != null;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // ensureModel: download models for the given direction.
+  // In offlineFirst mode this awaits the download so translation can proceed.
   // ──────────────────────────────────────────────────────────────────────────
 
   Future<void> ensureModel(
     TranslationDirection direction, {
     void Function(double progress)? onProgress,
+    bool offlineFirst = false,
   }) async {
-    // Signal done immediately — web API works without models.
-    onProgress?.call(1);
-    // Download models silently in background for future offline use.
-    unawaited(_silentDownload(direction));
+    if (!directionSupportsOffline(direction)) {
+      onProgress?.call(1);
+      return;
+    }
+
+    final pairKey = '${direction.sourceLangCode}|${direction.targetLangCode}';
+
+    if (_readyPairs.contains(pairKey)) {
+      onProgress?.call(1);
+      return;
+    }
+
+    if (offlineFirst) {
+      // Await the download so offline translation can work immediately.
+      await _downloadModels(direction, onProgress: onProgress);
+    } else {
+      // Signal done immediately for online-first mode (download silently).
+      onProgress?.call(1);
+      unawaited(_downloadModels(direction));
+    }
   }
 
-  Future<void> _silentDownload(TranslationDirection direction) async {
+  Future<void> _downloadModels(
+    TranslationDirection direction, {
+    void Function(double progress)? onProgress,
+  }) async {
     final pairKey = '${direction.sourceLangCode}|${direction.targetLangCode}';
-    if (_readyPairs.contains(pairKey)) return;
+    if (_readyPairs.contains(pairKey)) {
+      onProgress?.call(1);
+      return;
+    }
+
+    final srcLang = mlkitLanguage(direction.sourceLangCode);
+    final tgtLang = mlkitLanguage(direction.targetLangCode);
+    if (srcLang == null || tgtLang == null) {
+      onProgress?.call(1);
+      return;
+    }
+
     try {
-      final manager = OnDeviceTranslatorModelManager();
-      final srcOk = await manager.downloadModel(
-        direction.sourceLangCode, isWifiRequired: false,
-      );
-      final tgtOk = await manager.downloadModel(
-        direction.targetLangCode, isWifiRequired: false,
-      );
-      if (srcOk && tgtOk) _readyPairs.add(pairKey);
-    } catch (_) {}
+      onProgress?.call(0.1);
+      final srcModel = srcLang.bcpCode;
+      final tgtModel = tgtLang.bcpCode;
+
+      final srcOk = await _modelManager.downloadModel(srcModel, isWifiRequired: false);
+      onProgress?.call(0.6);
+      final tgtOk = await _modelManager.downloadModel(tgtModel, isWifiRequired: false);
+      onProgress?.call(0.95);
+
+      if (srcOk && tgtOk) {
+        _readyPairs.add(pairKey);
+        debugPrint('ML Kit models ready: $pairKey');
+      } else {
+        debugPrint('ML Kit model download partial: src=$srcOk tgt=$tgtOk');
+      }
+    } catch (e) {
+      debugPrint('ML Kit model download error: $e');
+    } finally {
+      onProgress?.call(1);
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // translate: tries 3 APIs in order.
+  // isModelReady: check if a pair is already downloaded.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  Future<bool> isModelReady(TranslationDirection direction) async {
+    final pairKey = '${direction.sourceLangCode}|${direction.targetLangCode}';
+    if (_readyPairs.contains(pairKey)) return true;
+
+    final srcLang = mlkitLanguage(direction.sourceLangCode);
+    final tgtLang = mlkitLanguage(direction.targetLangCode);
+    if (srcLang == null || tgtLang == null) return false;
+
+    try {
+      final srcReady = await _modelManager.isModelDownloaded(srcLang.bcpCode);
+      final tgtReady = await _modelManager.isModelDownloaded(tgtLang.bcpCode);
+      if (srcReady && tgtReady) {
+        _readyPairs.add(pairKey);
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // downloadModelForLanguage: public — called from settings screen.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  Future<bool> downloadModelForLanguage(AppLanguage lang) async {
+    final mlkit = mlkitLanguage(lang.code);
+    if (mlkit == null) return false;
+    try {
+      return await _modelManager.downloadModel(mlkit.bcpCode, isWifiRequired: false);
+    } catch (e) {
+      debugPrint('downloadModelForLanguage error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> isLanguageModelDownloaded(AppLanguage lang) async {
+    final mlkit = mlkitLanguage(lang.code);
+    if (mlkit == null) return false;
+    try {
+      return await _modelManager.isModelDownloaded(mlkit.bcpCode);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // translate: tries offline-first or online-first based on [offlineFirst].
   // ──────────────────────────────────────────────────────────────────────────
 
   Future<String> translate(
     String text,
-    TranslationDirection direction,
-  ) async {
+    TranslationDirection direction, {
+    bool offlineFirst = false,
+  }) async {
     if (text.trim().isEmpty) return '';
     final from = direction.sourceLangCode;
     final to = direction.targetLangCode;
 
-    // 1️⃣ MyMemory — free, no key, very reliable.
-    try {
-      debugPrint('Trying MyMemory API...');
-      final result = await _myMemory(text, from, to);
-      debugPrint('MyMemory success: $result');
-      return result;
-    } catch (e) {
-      debugPrint('MyMemory failed: $e');
+    if (offlineFirst) {
+      // ── Offline-first order: ML Kit → MyMemory → Google ──
+      final pairKey = '$from|$to';
+      final ready = _readyPairs.contains(pairKey) || await isModelReady(direction);
+      if (ready) {
+        try {
+          debugPrint('Offline-first: trying ML Kit...');
+          final result = await _mlKitTranslate(text, direction);
+          debugPrint('ML Kit success');
+          return result;
+        } catch (e) {
+          debugPrint('ML Kit failed in offline mode: $e');
+        }
+      } else {
+        debugPrint('Offline: models not ready, falling through to web APIs');
+      }
+      // Fallback to web APIs even in offline-first mode (user may have internet).
+      try {
+        return await _googleTranslate(text, from, to);
+      } catch (_) {}
+      try {
+        return await _myMemory(text, from, to);
+      } catch (_) {}
+      throw Exception(
+        'Offline translation not available. Please download the language model from Settings, or enable internet.',
+      );
     }
 
-    // 2️⃣ Google Translate unofficial endpoint.
+    // ── Online-first order: Google → MyMemory → ML Kit ──
+
+    // 1️⃣ Google Translate unofficial endpoint.
     try {
       debugPrint('Trying Google Translate API...');
       final result = await _googleTranslate(text, from, to);
-      debugPrint('Google Translate success: $result');
+      debugPrint('Google Translate success');
       return result;
     } catch (e) {
       debugPrint('Google Translate failed: $e');
     }
 
-    // 3️⃣ ML Kit on-device (works if model was previously downloaded).
+    // 2️⃣ MyMemory — free, no key, 1000 words/day per IP.
+    try {
+      debugPrint('Trying MyMemory API...');
+      final result = await _myMemory(text, from, to);
+      debugPrint('MyMemory success');
+      return result;
+    } catch (e) {
+      debugPrint('MyMemory failed: $e');
+    }
+
+    // 3️⃣ ML Kit on-device (works if models were previously downloaded).
     final pairKey = '$from|$to';
-    if (_readyPairs.contains(pairKey)) {
+    final ready = _readyPairs.contains(pairKey) || await isModelReady(direction);
+    if (ready) {
       try {
-        debugPrint('Trying ML Kit...');
-        final translator = _mlTranslator(direction);
-        return await translator.translateText(text);
+        debugPrint('Falling back to ML Kit...');
+        return await _mlKitTranslate(text, direction);
       } catch (e) {
-        debugPrint('ML Kit failed: $e');
+        debugPrint('ML Kit fallback failed: $e');
       }
     }
 
     throw Exception(
-      'Translation failed. Please check your internet connection.',
+      'Translation failed. Please check your internet connection or download the offline model from Settings.',
+    );
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // ML Kit translation helper — supports all mapped languages.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  Future<String> _mlKitTranslate(String text, TranslationDirection direction) async {
+    final srcLang = mlkitLanguage(direction.sourceLangCode);
+    final tgtLang = mlkitLanguage(direction.targetLangCode);
+    if (srcLang == null || tgtLang == null) {
+      throw Exception('Language pair not supported offline: ${direction.sourceLangCode}→${direction.targetLangCode}');
+    }
+    final translator = _mlTranslator(srcLang, tgtLang, direction);
+    return translator.translateText(text);
+  }
+
+  OnDeviceTranslator _mlTranslator(
+    TranslateLanguage src,
+    TranslateLanguage tgt,
+    TranslationDirection direction,
+  ) {
+    final key = '${direction.sourceLangCode}|${direction.targetLangCode}';
+    return _translators.putIfAbsent(
+      key,
+      () => OnDeviceTranslator(sourceLanguage: src, targetLanguage: tgt),
     );
   }
 
@@ -115,24 +350,43 @@ class TranslationService {
 
     final response = await _httpClient
         .get(uri, headers: {'Accept': 'application/json'})
-        .timeout(const Duration(seconds: 10));
+        .timeout(const Duration(seconds: 12));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      // responseStatus 200 means a real translation was found.
+      final responseStatus = data['responseStatus'] as int? ?? 0;
       final translated =
           (data['responseData'] as Map<String, dynamic>?)?['translatedText']
               as String?;
-      if (translated != null &&
+
+      final isQuotaWarning = translated?.contains('MYMEMORY WARNING') ?? false;
+
+      if (responseStatus == 200 &&
+          translated != null &&
           translated.isNotEmpty &&
-          translated != 'MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS FOR TODAY.') {
+          !isQuotaWarning &&
+          translated.toLowerCase() != text.toLowerCase()) {
         return translated;
       }
-      // Quota exceeded — try matches array
+
+      // Fallback: try matches array (often available even when quota exceeded).
       final matches = data['matches'] as List?;
-      if (matches != null && matches.isNotEmpty) {
-        final firstMatch = matches[0] as Map?;
-        final first = firstMatch?['translation'] as String?;
-        if (first != null && first.isNotEmpty) return first;
+      if (matches != null) {
+        for (final m in matches) {
+          final matchMap = m as Map?;
+          final matchText = matchMap?['translation'] as String?;
+          // quality ≥ 74 = human translation.
+          final quality = int.tryParse(
+              matchMap?['quality']?.toString() ?? '0') ?? 0;
+          if (matchText != null &&
+              matchText.isNotEmpty &&
+              quality >= 50 &&
+              matchText.toLowerCase() != text.toLowerCase()) {
+            return matchText;
+          }
+        }
       }
     }
     throw Exception('MyMemory returned ${response.statusCode}');
@@ -143,16 +397,37 @@ class TranslationService {
   // ──────────────────────────────────────────────────────────────────────────
 
   Future<String> _googleTranslate(String text, String from, String to) async {
+    // Try two different client IDs — 'gtx' is the most reliable but 'dict'
+    // occasionally works when 'gtx' is throttled.
+    for (final client in ['gtx', 'dict']) {
+      try {
+        final result = await _googleTranslateWithClient(text, from, to, client);
+        // Sanity-check: result must differ from source (avoid echo) and
+        // must not be empty.
+        if (result.isNotEmpty && result.toLowerCase() != text.toLowerCase()) {
+          return result;
+        }
+        // If same as source, try next client.
+        debugPrint('Google Translate ($client): result equals source — retrying');
+      } catch (e) {
+        debugPrint('Google Translate ($client) error: $e');
+      }
+    }
+    throw Exception('Google Translate unavailable');
+  }
+
+  Future<String> _googleTranslateWithClient(
+    String text, String from, String to, String client) async {
     final uri = Uri.https(
       'translate.googleapis.com',
       '/translate_a/single',
-      {'client': 'gtx', 'sl': from, 'tl': to, 'dt': 't', 'q': text},
+      {'client': client, 'sl': from, 'tl': to, 'dt': 't', 'q': text},
     );
 
     final response = await _httpClient.get(uri, headers: {
-      'User-Agent': 'Mozilla/5.0',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'Accept': 'application/json',
-    }).timeout(const Duration(seconds: 10));
+    }).timeout(const Duration(seconds: 12));
 
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body);
@@ -168,25 +443,6 @@ class TranslationService {
       }
     }
     throw Exception('Google Translate returned ${response.statusCode}');
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // ML Kit helpers.
-  // ──────────────────────────────────────────────────────────────────────────
-
-  OnDeviceTranslator _mlTranslator(TranslationDirection direction) {
-    final key = '${direction.sourceLangCode}|${direction.targetLangCode}';
-    return _translators.putIfAbsent(
-      key,
-      () => OnDeviceTranslator(
-        sourceLanguage: direction.sourceIsEnglish
-            ? TranslateLanguage.english
-            : TranslateLanguage.bengali,
-        targetLanguage: direction.sourceIsEnglish
-            ? TranslateLanguage.bengali
-            : TranslateLanguage.english,
-      ),
-    );
   }
 
   // ──────────────────────────────────────────────────────────────────────────

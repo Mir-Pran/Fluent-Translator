@@ -13,13 +13,13 @@ final translationRepositoryProvider =
     FutureProvider<TranslationRepository>((ref) async {
   final repo = await TranslationRepository.create();
   // Bump revision on every mutation so dependent list providers refresh.
-  repo.onChange = () => ref.invalidate(_historyRevisionProvider);
+  repo.onChange = () => ref.read(_historyRevisionProvider.notifier).update((state) => state + 1);
   ref.onDispose(repo.close);
   return repo;
 });
 
-/// Private revision marker — invalidated on any change.
-final _historyRevisionProvider = Provider<int>((ref) => 0);
+/// Private revision marker — bumped on any change.
+final _historyRevisionProvider = StateProvider<int>((ref) => 0);
 
 /// Synchronous accessor that returns the repo if ready, else null. Use this in
 /// widgets that already guard for the loading state elsewhere.

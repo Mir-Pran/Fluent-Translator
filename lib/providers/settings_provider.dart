@@ -1,8 +1,9 @@
 /// Persisted user preferences backed by shared_preferences.
 ///
 /// Stores: theme mode (system/light/dark), auto-translate toggle, auto-detect
-/// language toggle, TTS rate, and TTS accent preference. Everything is exposed
-/// as a Riverpod [Notifier] so the UI rebuilds reactively on change.
+/// language toggle, offline mode toggle, TTS rate, and TTS accent preference.
+/// Everything is exposed as a Riverpod [Notifier] so the UI rebuilds
+/// reactively on change.
 library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +17,7 @@ class AppSettings {
     this.themeMode = ThemeMode.dark,
     this.autoTranslate = false,
     this.autoDetectLanguage = true,
+    this.offlineMode = false,
     this.voiceRate = 0.5,
     this.useBanglaVoice = true,
   });
@@ -23,6 +25,11 @@ class AppSettings {
   final ThemeMode themeMode;
   final bool autoTranslate;
   final bool autoDetectLanguage;
+
+  /// When true, ML Kit on-device translation is used first. Falls back to
+  /// web APIs only if the model is not downloaded.
+  final bool offlineMode;
+
   final double voiceRate;
   final bool useBanglaVoice;
 
@@ -30,6 +37,7 @@ class AppSettings {
     ThemeMode? themeMode,
     bool? autoTranslate,
     bool? autoDetectLanguage,
+    bool? offlineMode,
     double? voiceRate,
     bool? useBanglaVoice,
   }) {
@@ -37,6 +45,7 @@ class AppSettings {
       themeMode: themeMode ?? this.themeMode,
       autoTranslate: autoTranslate ?? this.autoTranslate,
       autoDetectLanguage: autoDetectLanguage ?? this.autoDetectLanguage,
+      offlineMode: offlineMode ?? this.offlineMode,
       voiceRate: voiceRate ?? this.voiceRate,
       useBanglaVoice: useBanglaVoice ?? this.useBanglaVoice,
     );
@@ -46,6 +55,7 @@ class AppSettings {
 const _kThemeMode = 'themeMode';
 const _kAutoTranslate = 'autoTranslate';
 const _kAutoDetect = 'autoDetect';
+const _kOfflineMode = 'offlineMode';
 const _kVoiceRate = 'voiceRate';
 const _kBanglaVoice = 'banglaVoice';
 
@@ -62,6 +72,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
       themeMode: ThemeMode.values[themeIndex],
       autoTranslate: _prefs!.getBool(_kAutoTranslate) ?? false,
       autoDetectLanguage: _prefs!.getBool(_kAutoDetect) ?? true,
+      offlineMode: _prefs!.getBool(_kOfflineMode) ?? false,
       voiceRate: _prefs!.getDouble(_kVoiceRate) ?? 0.5,
       useBanglaVoice: _prefs!.getBool(_kBanglaVoice) ?? true,
     );
@@ -80,6 +91,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
   Future<void> toggleAutoDetect() async {
     state = state.copyWith(autoDetectLanguage: !state.autoDetectLanguage);
     await _prefs?.setBool(_kAutoDetect, state.autoDetectLanguage);
+  }
+
+  Future<void> toggleOfflineMode() async {
+    state = state.copyWith(offlineMode: !state.offlineMode);
+    await _prefs?.setBool(_kOfflineMode, state.offlineMode);
   }
 
   Future<void> setVoiceRate(double rate) async {

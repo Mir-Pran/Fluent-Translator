@@ -1,11 +1,13 @@
-/// Settings tab: appearance, translation, speech, and storage sections per PRD.
+/// Settings tab: appearance, translation, speech, offline models, and storage.
 library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants/app_dimens.dart';
+import '../../core/constants/app_languages.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/speech_provider.dart';
+import '../../providers/translation_provider.dart';
 import '../../providers/translation_repository_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -29,7 +31,7 @@ class SettingsScreen extends ConsumerWidget {
           Text('Settings', style: theme.textTheme.headlineMedium),
           const SizedBox(height: AppDimens.spaceLg),
 
-          // Appearance
+          // ── Appearance ────────────────────────────────────────────────────
           _SectionTitle('Appearance'),
           const SizedBox(height: AppDimens.spaceSm),
           _Card(
@@ -37,9 +39,7 @@ class SettingsScreen extends ConsumerWidget {
               groupValue: settings.themeMode,
               onChanged: (m) {
                 if (m != null) {
-                  ref
-                      .read(settingsProvider.notifier)
-                      .setThemeMode(m);
+                  ref.read(settingsProvider.notifier).setThemeMode(m);
                 }
               },
               child: Column(
@@ -58,31 +58,44 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: AppDimens.spaceLg),
 
-          // Translation
+          // ── Translation ───────────────────────────────────────────────────
           _SectionTitle('Translation'),
           const SizedBox(height: AppDimens.spaceSm),
           _Card(
             child: Column(
               children: [
                 SwitchListTile(
-                  value: settings.autoTranslate,
-                  onChanged: (_) => ref
-                      .read(settingsProvider.notifier)
-                      .toggleAutoTranslate(),
-                  title: const Text('Auto Translate'),
+                  value: settings.offlineMode,
+                  onChanged: (_) =>
+                      ref.read(settingsProvider.notifier).toggleOfflineMode(),
+                  title: const Text('Offline Mode'),
                   subtitle: const Text(
-                      'Translate automatically as you type'),
+                      'Use on-device ML Kit as primary translator (download models below)'),
+                  secondary: Icon(
+                    settings.offlineMode
+                        ? Icons.offline_bolt_rounded
+                        : Icons.offline_bolt_outlined,
+                    color: settings.offlineMode ? Colors.green.shade400 : null,
+                  ),
+                ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  value: settings.autoTranslate,
+                  onChanged: (_) =>
+                      ref.read(settingsProvider.notifier).toggleAutoTranslate(),
+                  title: const Text('Auto Translate'),
+                  subtitle:
+                      const Text('Translate automatically as you type'),
                   secondary: const Icon(Icons.flash_on_rounded),
                 ),
                 const Divider(height: 1),
                 SwitchListTile(
                   value: settings.autoDetectLanguage,
-                  onChanged: (_) => ref
-                      .read(settingsProvider.notifier)
-                      .toggleAutoDetect(),
+                  onChanged: (_) =>
+                      ref.read(settingsProvider.notifier).toggleAutoDetect(),
                   title: const Text('Auto Detect Language'),
                   subtitle: const Text(
-                      'Detect whether input is English or Bangla'),
+                      'Detect input language automatically from 20 supported languages'),
                   secondary: const Icon(Icons.auto_fix_high_rounded),
                 ),
               ],
@@ -90,7 +103,30 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: AppDimens.spaceLg),
 
-          // Speech
+          // ── Offline Models ─────────────────────────────────────────────────
+          _SectionTitle('Offline Models'),
+          const SizedBox(height: AppDimens.spaceSm),
+          Text(
+            'Download language models to translate without internet. '
+            'Each model is ~30–50 MB. English model is shared across all pairs.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+            ),
+          ),
+          const SizedBox(height: AppDimens.spaceSm),
+          _Card(
+            child: Column(
+              children: [
+                for (int i = 0; i < AppLanguages.offlineSupported.length; i++) ...[
+                  if (i > 0) const Divider(height: 1),
+                  _ModelTile(language: AppLanguages.offlineSupported[i]),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: AppDimens.spaceLg),
+
+          // ── Speech ────────────────────────────────────────────────────────
           _SectionTitle('Speech'),
           const SizedBox(height: AppDimens.spaceSm),
           _Card(
@@ -117,9 +153,8 @@ class SettingsScreen extends ConsumerWidget {
                           onChanged: (v) => ref
                               .read(settingsProvider.notifier)
                               .setVoiceRate(v),
-                          onChangeEnd: (v) => ref
-                              .read(speechServiceProvider)
-                              .setRate(v),
+                          onChangeEnd: (v) =>
+                              ref.read(speechServiceProvider).setRate(v),
                         ),
                       ),
                       const Text('1.0×'),
@@ -132,9 +167,9 @@ class SettingsScreen extends ConsumerWidget {
                   onChanged: (_) => ref
                       .read(settingsProvider.notifier)
                       .toggleBanglaVoice(),
-                  title: const Text('Prefer Bangla Voice'),
+                  title: const Text('Prefer Bengali Voice'),
                   subtitle: const Text(
-                      'Use a Bangla-accented voice for Bangla output'),
+                      'Use a Bengali-accented voice for Bengali output'),
                   secondary: const Icon(Icons.record_voice_over_rounded),
                 ),
               ],
@@ -142,7 +177,7 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: AppDimens.spaceLg),
 
-          // Storage
+          // ── Storage ───────────────────────────────────────────────────────
           _SectionTitle('Storage'),
           const SizedBox(height: AppDimens.spaceSm),
           _Card(
@@ -170,7 +205,7 @@ class SettingsScreen extends ConsumerWidget {
 
           Center(
             child: Text(
-              'Fluent Translate • v1.0.0',
+              'Fluent Translate • v1.1.0',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
               ),
@@ -227,6 +262,113 @@ class SettingsScreen extends ConsumerWidget {
       ..showSnackBar(SnackBar(content: Text(msg)));
   }
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Offline model tile — shows download status and a download/delete button.
+// ──────────────────────────────────────────────────────────────────────────────
+
+class _ModelTile extends ConsumerStatefulWidget {
+  const _ModelTile({required this.language});
+  final AppLanguage language;
+
+  @override
+  ConsumerState<_ModelTile> createState() => _ModelTileState();
+}
+
+class _ModelTileState extends ConsumerState<_ModelTile> {
+  bool? _isDownloaded;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkStatus();
+  }
+
+  Future<void> _checkStatus() async {
+    final service = ref.read(translationServiceProvider);
+    final result = await service.isLanguageModelDownloaded(widget.language);
+    if (mounted) setState(() => _isDownloaded = result);
+  }
+
+  Future<void> _download() async {
+    setState(() => _isLoading = true);
+    final service = ref.read(translationServiceProvider);
+    final ok = await service.downloadModelForLanguage(widget.language);
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+        _isDownloaded = ok;
+      });
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          content: Text(ok
+              ? '${widget.language.name} model downloaded'
+              : 'Download failed. Check your internet connection.'),
+        ));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isEn = widget.language.code == 'en';
+
+    Widget trailing;
+    if (_isLoading) {
+      trailing = const SizedBox(
+        width: 20, height: 20,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    } else if (_isDownloaded == true) {
+      trailing = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.check_circle_rounded,
+              size: 16, color: Colors.green.shade400),
+          const SizedBox(width: 4),
+          Text('Ready',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: Colors.green.shade400)),
+        ],
+      );
+    } else if (_isDownloaded == false) {
+      trailing = IconButton(
+        icon: const Icon(Icons.download_rounded),
+        iconSize: 20,
+        visualDensity: VisualDensity.compact,
+        tooltip: 'Download',
+        onPressed: isEn ? null : _download,
+        color: theme.colorScheme.primary,
+      );
+    } else {
+      trailing = const SizedBox(
+        width: 16, height: 16,
+        child: CircularProgressIndicator(strokeWidth: 1.5),
+      );
+    }
+
+    return ListTile(
+      dense: true,
+      leading: Text(widget.language.flag,
+          style: const TextStyle(fontSize: 20)),
+      title: Text(widget.language.name,
+          style: theme.textTheme.bodyMedium),
+      subtitle: Text(
+        isEn ? 'Base model (shared)' : widget.language.nativeName,
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+        ),
+      ),
+      trailing: trailing,
+    );
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────────────
 
 class _SectionTitle extends StatelessWidget {
   const _SectionTitle(this.text);

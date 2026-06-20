@@ -11,19 +11,63 @@ import 'package:hive/hive.dart';
 
 import '../../core/constants/app_languages.dart';
 
-/// Legacy enum kept for backward-compat with old Hive records.
-enum TranslationDirection {
-  enToBn,
-  bnToEn;
+/// Represents a translation direction between any two language codes.
+///
+/// The [enToBn] / [bnToEn] named constructors are kept for legacy Hive
+/// record compatibility (directionIndex 0 and 1). New code should use
+/// [TranslationDirection.fromCodes].
+class TranslationDirection {
+  const TranslationDirection._(this.sourceLangCode, this.targetLangCode);
 
-  String get label => switch (this) {
-        enToBn => 'English → বাংলা',
-        bnToEn => 'বাংলা → English',
-      };
+  /// English → Bengali (legacy index 0).
+  static const enToBn = TranslationDirection._('en', 'bn');
 
-  bool get sourceIsEnglish => this == enToBn;
-  String get sourceLangCode => sourceIsEnglish ? 'en' : 'bn';
-  String get targetLangCode => sourceIsEnglish ? 'bn' : 'en';
+  /// Bengali → English (legacy index 1).
+  static const bnToEn = TranslationDirection._('bn', 'en');
+
+  /// Legacy index list — used only for backward-compat Hive deserialization.
+  static const List<TranslationDirection> values = [enToBn, bnToEn];
+
+  /// Create a direction from arbitrary ISO codes.
+  factory TranslationDirection.fromCodes(String source, String target) {
+    if (source == 'en' && target == 'bn') return enToBn;
+    if (source == 'bn' && target == 'en') return bnToEn;
+    return TranslationDirection._(source, target);
+  }
+
+  final String sourceLangCode;
+  final String targetLangCode;
+
+  bool get sourceIsEnglish => sourceLangCode == 'en';
+
+  /// Legacy index: 0 = enToBn, 1 = bnToEn, -1 = other (non-legacy pair).
+  int get index {
+    if (sourceLangCode == 'en' && targetLangCode == 'bn') return 0;
+    if (sourceLangCode == 'bn' && targetLangCode == 'en') return 1;
+    return 0; // Safe default for Hive writing — actual pair stored in fields 7&8
+  }
+
+  AppLanguage? get sourceLang => AppLanguages.findByCode(sourceLangCode);
+  AppLanguage? get targetLang => AppLanguages.findByCode(targetLangCode);
+
+  String get label {
+    final src = sourceLang?.name ?? sourceLangCode.toUpperCase();
+    final tgt = targetLang?.name ?? targetLangCode.toUpperCase();
+    return '$src → $tgt';
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TranslationDirection &&
+          sourceLangCode == other.sourceLangCode &&
+          targetLangCode == other.targetLangCode;
+
+  @override
+  int get hashCode => Object.hash(sourceLangCode, targetLangCode);
+
+  @override
+  String toString() => 'TranslationDirection($sourceLangCode→$targetLangCode)';
 }
 
 @HiveType(typeId: 0)
@@ -38,7 +82,15 @@ class TranslationRecord extends HiveObject {
     required this.createdAt,
     this.isFavorite = false,
     this.folder,
-  }) : directionIndex = direction?.index ?? 0;
+  }) : directionIndex = direction?.index ?? 0 {
+    // Ensure explicit lang codes are always stored even for legacy pairs.
+    if (sourceLang == null && direction != null) {
+      sourceLang = direction.sourceLangCode;
+    }
+    if (targetLang == null && direction != null) {
+      targetLang = direction.targetLangCode;
+    }
+  }
 
   @HiveField(0)
   String id;
@@ -74,11 +126,15 @@ class TranslationRecord extends HiveObject {
 
   /// Effective source language code, falling back to legacy directionIndex.
   String get effectiveSourceLang =>
-      sourceLang ?? TranslationDirection.values[directionIndex].sourceLangCode;
+      sourceLang ?? TranslationDirection.values[directionIndex.clamp(0, 1)].sourceLangCode;
 
   /// Effective target language code, falling back to legacy directionIndex.
   String get effectiveTargetLang =>
-      targetLang ?? TranslationDirection.values[directionIndex].targetLangCode;
+      targetLang ?? TranslationDirection.values[directionIndex.clamp(0, 1)].targetLangCode;
+
+  /// Effective direction (works for any language pair).
+  TranslationDirection get effectiveDirection =>
+      TranslationDirection.fromCodes(effectiveSourceLang, effectiveTargetLang);
 
   /// Human-readable label: "English → French".
   String get directionLabel {
@@ -90,9 +146,12 @@ class TranslationRecord extends HiveObject {
   }
 
   /// Legacy getter — used by old code still referencing direction.
-  TranslationDirection get direction =>
-      TranslationDirection.values[directionIndex.clamp(0, 1)];
-  set direction(TranslationDirection d) => directionIndex = d.index;
+  TranslationDirection get direction => effectiveDirection;
+  set direction(TranslationDirection d) {
+    directionIndex = d.index;
+    sourceLang = d.sourceLangCode;
+    targetLang = d.targetLangCode;
+  }
 
   String get sourceLangCode => effectiveSourceLang;
   String get targetLangCode => effectiveTargetLang;
@@ -112,8 +171,8 @@ class TranslationRecord extends HiveObject {
       sourceText: sourceText ?? this.sourceText,
       translatedText: translatedText ?? this.translatedText,
       direction: direction,
-      sourceLang: sourceLang ?? this.sourceLang,
-      targetLang: targetLang ?? this.targetLang,
+      sourceLang: sourceLang ?? (direction?.sourceLangCode ?? this.sourceLang),
+      targetLang: targetLang ?? (direction?.targetLangCode ?? this.targetLang),
       createdAt: createdAt ?? this.createdAt,
       isFavorite: isFavorite ?? this.isFavorite,
       folder: folder ?? this.folder,
@@ -147,8 +206,13 @@ class _TranslationRecordAdapter extends TypeAdapter<TranslationRecord> {
     };
 
     final dirIdx = (fields[3] as int?) ?? 0;
-    final direction =
-        TranslationDirection.values[dirIdx.clamp(0, TranslationDirection.values.length - 1)];
+    final srcLang = fields[7] as String?;
+    final tgtLang = fields[8] as String?;
+
+    // Build direction: prefer explicit lang codes, fall back to legacy index.
+    final direction = (srcLang != null && tgtLang != null)
+        ? TranslationDirection.fromCodes(srcLang, tgtLang)
+        : TranslationDirection.values[dirIdx.clamp(0, 1)];
 
     return TranslationRecord(
       id: fields[0] as String,
@@ -158,8 +222,8 @@ class _TranslationRecordAdapter extends TypeAdapter<TranslationRecord> {
       createdAt: _decodeTimestamp(fields[4]),
       isFavorite: (fields[5] as bool?) ?? false,
       folder: fields[6] as String?,
-      sourceLang: fields[7] as String?,
-      targetLang: fields[8] as String?,
+      sourceLang: srcLang,
+      targetLang: tgtLang,
     );
   }
 
@@ -188,8 +252,8 @@ class _TranslationRecordAdapter extends TypeAdapter<TranslationRecord> {
       ..writeByte(6)
       ..write(obj.folder)
       ..writeByte(7)
-      ..write(obj.sourceLang)
+      ..write(obj.sourceLang ?? obj.effectiveSourceLang)
       ..writeByte(8)
-      ..write(obj.targetLang);
+      ..write(obj.targetLang ?? obj.effectiveTargetLang);
   }
 }

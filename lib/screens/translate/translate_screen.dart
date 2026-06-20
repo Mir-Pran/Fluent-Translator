@@ -25,6 +25,7 @@ class TranslateScreen extends ConsumerWidget {
     final settings = ref.read(settingsProvider);
     await ref.read(translateUiStateProvider.notifier).translate(
           autoDetect: settings.autoDetectLanguage,
+          offlineFirst: settings.offlineMode,
         );
   }
 
@@ -120,7 +121,13 @@ class _AutoTranslateEffectState extends ConsumerState<_AutoTranslateEffect> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.source != _lastFired) _schedule();
+    if (widget.source != _lastFired) {
+      if (widget.source.trim().isEmpty) {
+        _lastFired = widget.source;
+      } else {
+        _schedule();
+      }
+    }
     return const SizedBox.shrink();
   }
 }

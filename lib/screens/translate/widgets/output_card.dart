@@ -11,6 +11,7 @@ import '../../../core/constants/app_text_styles.dart';
 import '../../../providers/speech_provider.dart';
 import '../../../providers/translation_provider.dart';
 import '../../../providers/translation_repository_provider.dart';
+import '../../../widgets/glass_card.dart';
 
 class OutputCard extends ConsumerWidget {
   const OutputCard({super.key});
@@ -21,52 +22,46 @@ class OutputCard extends ConsumerWidget {
 
     if (record == null) {
       // Show a placeholder card so the output area is always visible.
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppDimens.spaceMd,
-            vertical: AppDimens.spaceLg,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.translate_rounded,
-                size: 20,
+      return GlassCard(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppDimens.spaceMd,
+          vertical: AppDimens.spaceLg,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.translate_rounded,
+              size: 20,
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurface
+                  .withValues(alpha: 0.2),
+            ),
+            const SizedBox(width: AppDimens.spaceSm),
+            Text(
+              'Translation will appear here',
+              style: AppTextStyles.body.copyWith(
                 color: Theme.of(context)
                     .colorScheme
                     .onSurface
                     .withValues(alpha: 0.2),
               ),
-              const SizedBox(width: AppDimens.spaceSm),
-              Text(
-                'Translation will appear here',
-                style: AppTextStyles.body.copyWith(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: 0.2),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
 
 
-    return AnimatedOpacity(
-      opacity: 1,
-      duration: AppDimens.duration,
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppDimens.spaceMd,
-            AppDimens.space,
-            AppDimens.spaceSm,
-            AppDimens.spaceSm,
-          ),
-          child: Column(
+    return GlassCard(
+        padding: const EdgeInsets.fromLTRB(
+          AppDimens.spaceMd,
+          AppDimens.space,
+          AppDimens.spaceSm,
+          AppDimens.spaceSm,
+        ),
+        child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SelectableText(
@@ -136,9 +131,7 @@ class OutputCard extends ConsumerWidget {
               ),
             ],
           ),
-        ),
-      ),
-    );
+        );
   }
 }
 
