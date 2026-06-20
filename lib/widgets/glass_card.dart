@@ -3,6 +3,11 @@ import 'package:flutter/material.dart';
 
 import '../core/constants/app_dimens.dart';
 
+/// Lightweight frosted-glass card.
+///
+/// Uses a reduced blur sigma (10) for good 120fps performance while keeping
+/// the glass look. No per-card BoxShadow (each shadow adds a compositing
+/// layer); the border + translucent fill is enough.
 class GlassCard extends StatelessWidget {
   const GlassCard({
     super.key,
@@ -19,44 +24,29 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final r = borderRadius ?? BorderRadius.circular(AppDimens.radius);
 
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: r,
-        boxShadow: [
-          BoxShadow(
+    return ClipRRect(
+      borderRadius: r,
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          padding: padding ?? const EdgeInsets.all(AppDimens.spaceMd),
+          decoration: BoxDecoration(
             color: isDark
-                ? Colors.black.withValues(alpha: 0.15)
-                : Colors.black.withValues(alpha: 0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+                ? Colors.white.withValues(alpha: 0.04)
+                : Colors.white.withValues(alpha: 0.4),
+            borderRadius: r,
+            border: border ??
+                Border.all(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.08)
+                      : Colors.white.withValues(alpha: 0.6),
+                  width: 1.0,
+                ),
           ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: r,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: Container(
-            padding: padding ?? const EdgeInsets.all(AppDimens.spaceMd),
-            decoration: BoxDecoration(
-              color: isDark
-                  ? Colors.white.withValues(alpha: 0.04)
-                  : Colors.white.withValues(alpha: 0.4),
-              borderRadius: r,
-              border: border ??
-                  Border.all(
-                    color: isDark
-                        ? Colors.white.withValues(alpha: 0.08)
-                        : Colors.white.withValues(alpha: 0.6),
-                    width: 1.0,
-                  ),
-            ),
-            child: child,
-          ),
+          child: child,
         ),
       ),
     );

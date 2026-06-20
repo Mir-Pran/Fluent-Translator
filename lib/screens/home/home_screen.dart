@@ -1,6 +1,6 @@
 /// Root screen: ambient background + glass bottom nav switching between
-/// 5 tabs via an IndexedStack (keeps state alive).
-/// RepaintBoundary is placed around each inactive screen and the nav bar
+/// 5 tabs via an Offstage stack (keeps state alive, cheap switches).
+/// RepaintBoundary is placed around each screen and the nav bar
 /// to prevent unnecessary repaints on tab switches.
 library;
 import 'package:flutter/material.dart';
@@ -57,19 +57,9 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               for (int i = 0; i < screens.length; i++)
                 RepaintBoundary(
-                  child: IgnorePointer(
-                    ignoring: i != _index,
-                    child: AnimatedOpacity(
-                      opacity: i == _index ? 1.0 : 0.0,
-                      duration: const Duration(milliseconds: 280),
-                      curve: Curves.easeInOutCubic,
-                      child: AnimatedScale(
-                        scale: i == _index ? 1.0 : 0.97,
-                        duration: const Duration(milliseconds: 280),
-                        curve: Curves.easeOutCubic,
-                        child: screens[i],
-                      ),
-                    ),
+                  child: Offstage(
+                    offstage: i != _index,
+                    child: screens[i],
                   ),
                 ),
             ],

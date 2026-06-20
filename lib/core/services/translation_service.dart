@@ -271,29 +271,50 @@ class TranslationService {
       );
     }
 
-    // ── Online-first order: Google → MyMemory → ML Kit ──
+    // ── Online-first: race Google + MyMemory in parallel, fastest wins ──
+    // Both fire at once; we return the first that succeeds. Much faster than
+    // sequential fallbacks, which had to fully wait for each source.
+    final googleFuture = _googleTranslate(text, from, to).timeout(
+      const Duration(seconds: 6),
+      onTimeout: () => throw Exception('Google timeout'),
+    );
+    final myMemoryFuture = _myMemory(text, from, to).timeout(
+      const Duration(seconds: 6),
+      onTimeout: () => throw Exception('MyMemory timeout'),
+    );
 
-    // 1️⃣ Google Translate unofficial endpoint.
+    bool gotResult = false;
+    String? result;
+    final errors = <Object>[];
+
     try {
-      debugPrint('Trying Google Translate API...');
-      final result = await _googleTranslate(text, from, to);
-      debugPrint('Google Translate success');
-      return result;
-    } catch (e) {
-      debugPrint('Google Translate failed: $e');
+      result = await Future.any([googleFuture, myMemoryFuture]);
+      gotResult = true;
+      debugPrint('Translation race: fastest source returned ${result?.length ?? 0} chars');
+    } on Exception catch (e) {
+      // Future.any throws when the first completes with an error. Continue to
+      // await the other one.
+      errors.add(e);
     }
 
-    // 2️⃣ MyMemory — free, no key, 1000 words/day per IP.
-    try {
-      debugPrint('Trying MyMemory API...');
-      final result = await _myMemory(text, from, to);
-      debugPrint('MyMemory success');
-      return result;
-    } catch (e) {
-      debugPrint('MyMemory failed: $e');
+    // If the race's first finisher errored, wait for the other.
+    if (!gotResult) {
+      for (final f in [googleFuture, myMemoryFuture]) {
+        try {
+          result = await f;
+          gotResult = true;
+          break;
+        } catch (e) {
+          errors.add(e);
+        }
+      }
     }
 
-    // 3️⃣ ML Kit on-device (works if models were previously downloaded).
+    if (gotResult && result != null && result.isNotEmpty) {
+      return result;
+    }
+
+    // Last resort: ML Kit on-device (works if models were previously downloaded).
     final pairKey = '$from|$to';
     final ready = _readyPairs.contains(pairKey) || await isModelReady(direction);
     if (ready) {
@@ -350,7 +371,7 @@ class TranslationService {
 
     final response = await _httpClient
         .get(uri, headers: {'Accept': 'application/json'})
-        .timeout(const Duration(seconds: 12));
+        .timeout(const Duration(seconds: 8));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -372,17 +393,25 @@ class TranslationService {
       }
 
       // Fallback: try matches array (often available even when quota exceeded).
+      // IMPORTANT: each match has a "segment" field = the source text it
+      // translates. Crowd-sourced memory can contain totally unrelated entries
+      // (e.g. song lyrics), so we must verify the segment matches our input —
+      // otherwise we return garbage for short/common words like "hello".
       final matches = data['matches'] as List?;
       if (matches != null) {
+        final normalizedInput = text.trim().toLowerCase();
         for (final m in matches) {
           final matchMap = m as Map?;
           final matchText = matchMap?['translation'] as String?;
+          final segment = matchMap?['segment'] as String?;
           // quality ≥ 74 = human translation.
           final quality = int.tryParse(
               matchMap?['quality']?.toString() ?? '0') ?? 0;
           if (matchText != null &&
               matchText.isNotEmpty &&
-              quality >= 50 &&
+              quality >= 74 &&
+              segment != null &&
+              segment.trim().toLowerCase() == normalizedInput &&
               matchText.toLowerCase() != text.toLowerCase()) {
             return matchText;
           }
@@ -402,13 +431,13 @@ class TranslationService {
     for (final client in ['gtx', 'dict']) {
       try {
         final result = await _googleTranslateWithClient(text, from, to, client);
-        // Sanity-check: result must differ from source (avoid echo) and
-        // must not be empty.
-        if (result.isNotEmpty && result.toLowerCase() != text.toLowerCase()) {
+        // Sanity-check: result must not be empty. We accept same-as-source
+        // because loanwords (e.g. "hello" bn→en) and short phrases often
+        // don't change across languages — rejecting them would fall through
+        // to MyMemory garbage matches.
+        if (result.isNotEmpty) {
           return result;
         }
-        // If same as source, try next client.
-        debugPrint('Google Translate ($client): result equals source — retrying');
       } catch (e) {
         debugPrint('Google Translate ($client) error: $e');
       }
@@ -427,7 +456,7 @@ class TranslationService {
     final response = await _httpClient.get(uri, headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'Accept': 'application/json',
-    }).timeout(const Duration(seconds: 12));
+    }).timeout(const Duration(seconds: 8));
 
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body);

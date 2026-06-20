@@ -35,6 +35,15 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+
+            // ML Kit text recognition references script recognizers (Chinese,
+            // Japanese, Korean, Devanagari) that aren't bundled in this app.
+            // Without these rules, R8 (AGP 9) fails the release build on the
+            // missing classes. See proguard-rules.pro.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }

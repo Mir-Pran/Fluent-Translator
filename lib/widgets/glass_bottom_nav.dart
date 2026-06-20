@@ -44,7 +44,7 @@ class GlassBottomNav extends StatelessWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(AppDimens.radius),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
             child: Container(
               height: AppDimens.bottomNavHeight,
               decoration: BoxDecoration(

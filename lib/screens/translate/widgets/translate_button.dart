@@ -30,13 +30,26 @@ class _TranslateButtonState extends State<TranslateButton>
     _shimmer = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 3),
-    )..repeat();
+    );
+    // Only animate while loading — saves GPU when idle at 120fps.
+    if (widget.isLoading) _shimmer.repeat();
   }
 
   @override
   void dispose() {
     _shimmer.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(TranslateButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isLoading && !oldWidget.isLoading) {
+      _shimmer.repeat();
+    } else if (!widget.isLoading && oldWidget.isLoading) {
+      _shimmer.stop();
+      _shimmer.forward(from: 0); // reset to initial gradient position
+    }
   }
 
   @override
